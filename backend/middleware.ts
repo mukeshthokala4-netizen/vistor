@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const railwayBackendDomain = "vistor-production.up.railway.app";
+const railwayFlutterOrigin = "https://vistor-production-3aae0f81.up.railway.app";
+
 function allowedOrigin(origin: string | null): origin is string {
   if (!origin) return false;
   const configuredOrigins = (process.env.FLUTTER_WEB_ORIGIN ?? "")
@@ -7,12 +10,13 @@ function allowedOrigin(origin: string | null): origin is string {
     .map((item) => item.trim().replace(/\/+$/, ""))
     .filter(Boolean);
   if (configuredOrigins.includes(origin)) return true;
-
-  // Allow Vercel preview and production deployments for the Flutter web frontend.
-  if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)) return true;
+  if (configuredOrigins.length === 0 &&
+      process.env.RAILWAY_PUBLIC_DOMAIN === railwayBackendDomain &&
+      origin === railwayFlutterOrigin) return true;
 
   // Flutter's local Chrome debug port changes unless --web-port is specified.
-  return /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
+  return process.env.NODE_ENV === "development" &&
+    /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
 }
 
 function addCorsHeaders(response: NextResponse, origin: string) {
@@ -27,19 +31,22 @@ function addCorsHeaders(response: NextResponse, origin: string) {
     "Content-Type, Accept, Authorization",
   );
   response.headers.set("Access-Control-Max-Age", "600");
-  response.headers.append("Vary", "Origin");
   return response;
 }
 
 export function middleware(request: NextRequest) {
   const origin = request.headers.get("origin");
-  if (request.method === "OPTIONS") {
-    if (!allowedOrigin(origin)) return new NextResponse(null, { status: 403 });
-    return addCorsHeaders(new NextResponse(null, { status: 204 }), origin);
-  }
-
-  const response = NextResponse.next();
-  return allowedOrigin(origin) ? addCorsHeaders(response, origin) : response;
+  const allowed = allowedOrigin(origin);
+  const preflight = request.method === "OPTIONS" &&
+    request.headers.has("access-control-request-method");
+  const response = preflight
+    ? new NextResponse(null, { status: allowed ? 204 : 403 })
+    : NextResponse.next();
+  response.headers.append("Vary", "Origin");
+  return allowed ? addCorsHeaders(response, origin) : response;
 }
 
-export const config = { matcher: "/qr-code/api/:path*" };
+export const config = {
+  matcher: "/qr-code/api/:path*",
+  runtime: "nodejs",
+};
